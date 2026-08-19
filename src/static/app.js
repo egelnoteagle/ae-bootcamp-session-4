@@ -3,6 +3,31 @@ document.addEventListener("DOMContentLoaded", () => {
   const capabilitySelect = document.getElementById("capability");
   const registerForm = document.getElementById("register-form");
   const messageDiv = document.getElementById("message");
+  const authForm = document.getElementById("auth-form");
+  const authStatus = document.getElementById("auth-status");
+  let credentials = null;
+  let currentUser = null;
+
+  function authHeaders() {
+    return credentials ? { Authorization: `Basic ${credentials}` } : {};
+  }
+
+  function updateAuthView() {
+    const isAuthenticated = Boolean(currentUser);
+    registerForm.classList.toggle("hidden", !isAuthenticated);
+    authForm.classList.toggle("hidden", isAuthenticated);
+    authStatus.classList.toggle("hidden", !isAuthenticated);
+    if (isAuthenticated) {
+      authStatus.innerHTML = `Signed in as ${currentUser.username} (${currentUser.role}) <button id="sign-out" type="button">Sign Out</button>`;
+      authStatus.className = "success";
+      document.getElementById("sign-out").addEventListener("click", () => {
+        credentials = null;
+        currentUser = null;
+        updateAuthView();
+        fetchCapabilities();
+      });
+    }
+  }
 
   // Function to fetch capabilities from API
   async function fetchCapabilities() {
@@ -12,6 +37,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
       // Clear loading message
       capabilitiesList.innerHTML = "";
+      capabilitySelect.innerHTML = '<option value="">-- Select a capability --</option>';
 
       // Populate capabilities list
       Object.entries(capabilities).forEach(([name, details]) => {
@@ -28,10 +54,13 @@ document.addEventListener("DOMContentLoaded", () => {
               <h5>Registered Consultants:</h5>
               <ul class="consultants-list">
                 ${details.consultants
-                  .map(
-                    (email) =>
-                      `<li><span class="consultant-email">${email}</span><button class="delete-btn" data-capability="${name}" data-email="${email}">❌</button></li>`
-                  )
+                  .map((email) => {
+                    const canRemove = currentUser &&
+                      (currentUser.role === "administrator" ||
+                        currentUser.role === "practice_lead" ||
+                        (currentUser.role === "consultant" && currentUser.username === email));
+                    return `<li><span class="consultant-email">${email}</span>${canRemove ? `<button class="delete-btn" data-capability="${name}" data-email="${email}">Remove</button>` : ""}</li>`;
+                  })
                   .join("")}
               </ul>
             </div>`
@@ -82,6 +111,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/unregister?email=${encodeURIComponent(email)}`,
         {
           method: "DELETE",
+          headers: authHeaders(),
         }
       );
 
@@ -113,6 +143,25 @@ document.addEventListener("DOMContentLoaded", () => {
   }
 
   // Handle form submission
+  authForm.addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const username = document.getElementById("username").value;
+    const password = document.getElementById("password").value;
+    credentials = btoa(`${username}:${password}`);
+    const response = await fetch("/auth/me", { headers: authHeaders() });
+    if (!response.ok) {
+      credentials = null;
+      authStatus.textContent = "Invalid username or password.";
+      authStatus.className = "error";
+      authStatus.classList.remove("hidden");
+      return;
+    }
+    currentUser = await response.json();
+    authForm.reset();
+    updateAuthView();
+    fetchCapabilities();
+  });
+
   registerForm.addEventListener("submit", async (event) => {
     event.preventDefault();
 
@@ -126,6 +175,7 @@ document.addEventListener("DOMContentLoaded", () => {
         )}/register?email=${encodeURIComponent(email)}`,
         {
           method: "POST",
+          headers: authHeaders(),
         }
       );
 
@@ -158,5 +208,6 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 
   // Initialize app
+  updateAuthView();
   fetchCapabilities();
 });
