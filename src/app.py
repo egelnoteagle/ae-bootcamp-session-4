@@ -5,14 +5,63 @@ A FastAPI application that enables Slalom consultants to register their
 capabilities and manage consulting expertise across the organization.
 """
 
-from fastapi import FastAPI, HTTPException
-from fastapi.staticfiles import StaticFiles
-from fastapi.responses import RedirectResponse
+import hashlib
+import hmac
+import json
 import os
 from pathlib import Path
 
+from fastapi import Depends, FastAPI, HTTPException, status
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
+from fastapi.staticfiles import StaticFiles
+from fastapi.responses import RedirectResponse
+
 app = FastAPI(title="Slalom Capabilities Management API",
               description="API for managing consulting capabilities and consultant expertise")
+security = HTTPBasic()
+
+
+def load_users():
+    configured_users = os.getenv("AUTH_USERS_JSON")
+    if configured_users:
+        try:
+            users = json.loads(configured_users)
+        except json.JSONDecodeError as error:
+            raise RuntimeError("AUTH_USERS_JSON must contain valid JSON") from error
+        if not isinstance(users, dict):
+            raise RuntimeError("AUTH_USERS_JSON must be a JSON object")
+        return users
+
+    return {
+        "admin": {"password": "admin", "role": "administrator"},
+        "lead": {"password": "lead", "role": "practice_lead"},
+        "consultant": {"password": "consultant", "role": "consultant"},
+        "manager": {"password": "manager", "role": "project_manager"},
+    }
+
+
+users = load_users()
+
+
+def authenticate(credentials: HTTPBasicCredentials = Depends(security)):
+    user = users.get(credentials.username)
+    valid_password = user and hmac.compare_digest(
+        hashlib.sha256(credentials.password.encode()).hexdigest(),
+        hashlib.sha256(user["password"].encode()).hexdigest(),
+    )
+    if not valid_password:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid username or password",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return {"username": credentials.username, "role": user["role"]}
+
+
+def require_capability_write_access(user=Depends(authenticate)):
+    if user["role"] not in {"administrator", "practice_lead", "consultant"}:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Insufficient permissions")
+    return user
 
 # Mount the static files directory
 current_dir = Path(__file__).parent
@@ -115,9 +164,17 @@ def get_capabilities():
     return capabilities
 
 
+@app.get("/auth/me")
+def get_current_user(user=Depends(authenticate)):
+    return user
+
+
 @app.post("/capabilities/{capability_name}/register")
-def register_for_capability(capability_name: str, email: str):
+def register_for_capability(capability_name: str, email: str, user=Depends(require_capability_write_access)):
     """Register a consultant for a capability"""
+    if user["role"] == "consultant" and user["username"] != email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consultants can only register themselves")
+
     # Validate capability exists
     if capability_name not in capabilities:
         raise HTTPException(status_code=404, detail="Capability not found")
@@ -138,8 +195,11 @@ def register_for_capability(capability_name: str, email: str):
 
 
 @app.delete("/capabilities/{capability_name}/unregister")
-def unregister_from_capability(capability_name: str, email: str):
+def unregister_from_capability(capability_name: str, email: str, user=Depends(require_capability_write_access)):
     """Unregister a consultant from a capability"""
+    if user["role"] == "consultant" and user["username"] != email:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Consultants can only unregister themselves")
+
     # Validate capability exists
     if capability_name not in capabilities:
         raise HTTPException(status_code=404, detail="Capability not found")

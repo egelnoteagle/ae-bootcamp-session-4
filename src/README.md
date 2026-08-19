@@ -63,6 +63,25 @@ The application uses a consulting-focused data model:
 
 All data is currently stored in memory for this learning exercise. In a production environment, this would be backed by a robust database system.
 
+## Authentication
+
+Capability registration and removal require authentication. The default local users are:
+
+| Username | Password | Role |
+| --- | --- | --- |
+| `admin` | `admin` | Administrator |
+| `lead` | `lead` | Practice lead |
+| `consultant` | `consultant` | Consultant |
+| `manager` | `manager` | Project manager |
+
+For local development, replace the defaults with a JSON object in `AUTH_USERS_JSON`, for example:
+
+```json
+{"alice":{"password":"change-me","role":"practice_lead"}}
+```
+
+Set this environment variable before starting the application. HTTP Basic authentication is intended for local development; use HTTPS and a production identity provider before deployment.
+
 ## Future Enhancements
 
 This exercise will guide you through implementing:
